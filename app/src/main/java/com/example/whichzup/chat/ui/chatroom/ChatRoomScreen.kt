@@ -550,13 +550,14 @@ fun MessageBubble(
                 Column(modifier = Modifier.padding(12.dp)) {
                     // 1. Renderiza a Imagem se existir mediaUrl
                     if (!message.mediaUrl.isNullOrEmpty()) {
-                        val isAudio = message.mediaUrl.endsWith(".mp3") || message.mediaUrl.contains("audio_")
+                        // Lógica de detecção: se o link contém "audios" ou termina com ".mp3"
+                        val isAudio = message.mediaUrl.contains("audios") || message.mediaUrl.endsWith(".mp3")
 
                         if (isAudio) {
-                            // Se for áudio, mostra o Player que criamos acima
+                            // Se for áudio, desenha o Player
                             AudioPlayer(audioUrl = message.mediaUrl)
                         } else {
-                            // Se não for áudio, assume que é imagem (como já estava)
+                            // Se não for áudio, desenha a Imagem
                             coil.compose.AsyncImage(
                                 model = message.mediaUrl,
                                 contentDescription = "Imagem enviada",
@@ -809,10 +810,12 @@ class AudioRecorder(private val context: android.content.Context) {
 @Composable
 fun AudioPlayer(audioUrl: String) {
     val context = LocalContext.current
+    // Usamos o remember para o MediaPlayer não ser recriado toda vez que a tela redesenhar
     val mediaPlayer = remember { android.media.MediaPlayer() }
     var isPlaying by remember { mutableStateOf(false) }
+    var isPrepared by remember { mutableStateOf(false) }
 
-    // Limpa o player quando o item sai da tela
+    // Limpa o player da memória se o usuário sair da tela
     DisposableEffect(Unit) {
         onDispose {
             mediaPlayer.release()
@@ -822,44 +825,51 @@ fun AudioPlayer(audioUrl: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .background(Color.Black.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+            .padding(vertical = 4.dp)
+            .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = {
-            if (isPlaying) {
-                mediaPlayer.pause()
-                isPlaying = false
-            } else {
-                try {
-                    mediaPlayer.reset()
-                    mediaPlayer.setDataSource(context, android.net.Uri.parse(audioUrl))
-                    mediaPlayer.prepare()
-                    mediaPlayer.start()
-                    isPlaying = true
-
-                    // Quando acabar o áudio, volta o ícone para "Play"
-                    mediaPlayer.setOnCompletionListener { isPlaying = false }
-                } catch (e: Exception) {
-                    Toast.makeText(context, "Erro ao reproduzir áudio", Toast.LENGTH_SHORT).show()
+            try {
+                if (isPlaying) {
+                    mediaPlayer.pause()
+                    isPlaying = false
+                } else {
+                    if (!isPrepared) {
+                        mediaPlayer.reset()
+                        mediaPlayer.setDataSource(audioUrl) // URL do Firebase
+                        mediaPlayer.prepareAsync() // Prepara em background para não travar o app
+                        mediaPlayer.setOnPreparedListener {
+                            isPrepared = true
+                            it.start()
+                            isPlaying = true
+                        }
+                    } else {
+                        mediaPlayer.start()
+                        isPlaying = true
+                    }
                 }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Erro ao tocar áudio", Toast.LENGTH_SHORT).show()
             }
         }) {
             Icon(
                 imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (isPlaying) "Pausar" else "Ouvir",
+                contentDescription = null,
                 tint = Color.White
             )
         }
 
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Visual simples de "onda de áudio" ou apenas um texto
         Text(
             text = "Mensagem de voz",
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.8f)
+            color = Color.White
         )
+
+        // Quando o áudio terminar, reseta o ícone
+        mediaPlayer.setOnCompletionListener {
+            isPlaying = false
+        }
     }
 }
