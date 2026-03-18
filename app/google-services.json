@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "383716188527",
+    "project_id": "whichzup",
+    "storage_bucket": "whichzup.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383716188527:android:cfd27899f34f769e4d089a",
+        "android_client_info": {
+          "package_name": "com.example.whichzup"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBIqn3DMKuyrQS0zSQd10RU_ypeW6pNG1s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
