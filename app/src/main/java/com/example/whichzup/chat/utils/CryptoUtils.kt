@@ -1,64 +1,71 @@
-/* Begin, prompt: Provide a simple utility class in Kotlin to encrypt and decrypt message text */
+// com/example/whichzup/chat/utils/CryptoManager.kt
 package com.example.whichzup.chat.utils
 
-import android.util.Base64
-import java.security.SecureRandom
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.security.KeyStore
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import android.util.Base64
 
-object CryptoUtils {
+class CryptoManager {
 
-    private const val ALGORITHM = "AES/GCM/NoPadding"
-    private const val TAG_LENGTH_BIT = 128
-    private const val IV_LENGTH_BYTE = 12
+    private val keyStore = KeyStore.getInstance("AndroidKeyStore").apply {
+        load(null)
+    }
 
-    /**
-     * Encrypts plaintext. Returns a Base64 string containing both the IV and the Ciphertext.
-     */
-    fun encrypt(plainText: String, secretKey: SecretKey): String {
-        try {
-            val cipher = Cipher.getInstance(ALGORITHM)
+    private fun getSecretKey(): SecretKey {
+        val existingKey = keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry
+        return existingKey?.secretKey ?: createSecretKey()
+    }
 
-            // Generate a random initialization vector (IV) for this encryption
-            val iv = ByteArray(IV_LENGTH_BYTE)
-            SecureRandom().nextBytes(iv)
-            val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
+    private fun createSecretKey(): SecretKey {
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        val spec = KeyGenParameterSpec.Builder(
+            ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .build()
+        keyGenerator.init(spec)
+        return keyGenerator.generateKey()
+    }
 
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey, parameterSpec)
-            val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+    fun encrypt(plainText: String): String {
+        if (plainText.isBlank()) return plainText
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey())
 
-            // Prepend IV to ciphertext for use during decryption
-            val combined = iv + cipherText
-            return Base64.encodeToString(combined, Base64.DEFAULT)
+        val iv = cipher.iv
+        val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+
+        val combined = iv + cipherText
+        return Base64.encodeToString(combined, Base64.DEFAULT)
+    }
+
+    fun decrypt(encryptedText: String): String {
+        if (encryptedText.isBlank()) return encryptedText
+        return try {
+            val combined = Base64.decode(encryptedText, Base64.DEFAULT)
+            val iv = combined.copyOfRange(0, 12)
+            val cipherText = combined.copyOfRange(12, combined.size)
+
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            val spec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, getSecretKey(), spec)
+
+            String(cipher.doFinal(cipherText), Charsets.UTF_8)
         } catch (e: Exception) {
             e.printStackTrace()
-            return "" // Handle properly in production with custom exceptions/Result wrappers
+            "*[Encrypted Message]*"
         }
     }
 
-    /**
-     * Decrypts a Base64 string containing the IV and Ciphertext.
-     */
-    fun decrypt(encryptedText: String, secretKey: SecretKey): String {
-        try {
-            val combined = Base64.decode(encryptedText, Base64.DEFAULT)
-
-            // Extract the IV from the beginning
-            val iv = combined.copyOfRange(0, IV_LENGTH_BYTE)
-            val cipherText = combined.copyOfRange(IV_LENGTH_BYTE, combined.size)
-
-            val cipher = Cipher.getInstance(ALGORITHM)
-            val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, parameterSpec)
-            val plainText = cipher.doFinal(cipherText)
-
-            return String(plainText, Charsets.UTF_8)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return "" // Handle properly in production
-        }
+    companion object {
+        private const val ALIAS = "whichzup_master_key"
+        private const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }
-/* End */

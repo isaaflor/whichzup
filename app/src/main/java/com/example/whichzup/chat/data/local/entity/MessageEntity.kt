@@ -1,3 +1,4 @@
+// com/example/whichzup/chat/data/local/entity/MessageEntity.kt
 package com.example.whichzup.chat.data.local.entity
 
 import androidx.room.Entity
@@ -8,10 +9,12 @@ import java.util.Date
 @Entity(tableName = "messages")
 data class MessageEntity(
     @PrimaryKey val id: String,
-    val chatId: String, // Explicit association needed for relational DB
+    val chatId: String,
     val senderId: String,
     val text: String?,
     val mediaUrl: String?,
+    val mediaType: String?,
+    val mediaFileName: String?,
     val timestamp: Date?,
     val status: String,
     val readBy: List<String>,
@@ -24,6 +27,8 @@ fun MessageEntity.toDomain(): Message = Message(
     senderId = senderId,
     text = text,
     mediaUrl = mediaUrl,
+    mediaType = mediaType,
+    mediaFileName = mediaFileName,
     timestamp = timestamp,
     status = status,
     readBy = readBy,
@@ -37,6 +42,8 @@ fun Message.toEntity(chatId: String): MessageEntity = MessageEntity(
     senderId = senderId,
     text = text,
     mediaUrl = mediaUrl,
+    mediaType = mediaType,
+    mediaFileName = mediaFileName,
     timestamp = timestamp,
     status = status,
     readBy = readBy,

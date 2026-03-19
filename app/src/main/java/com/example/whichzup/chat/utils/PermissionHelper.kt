@@ -20,6 +20,18 @@ object PermissionHelper {
         Manifest.permission.RECORD_AUDIO
     )
 
+    val mediaPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_AUDIO
+        )
+    } else {
+        arrayOf(
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        )
+    }
+
     fun hasPermissions(context: Context, permissions: Array<String>): Boolean {
         return permissions.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
@@ -29,5 +41,5 @@ object PermissionHelper {
     fun hasLocationPermission(context: Context): Boolean = hasPermissions(context, locationPermissions)
     fun hasCameraPermission(context: Context): Boolean = hasPermissions(context, cameraPermissions)
     fun hasAudioPermission(context: Context): Boolean = hasPermissions(context, audioPermissions)
+    fun hasMediaPermission(context: Context): Boolean = hasPermissions(context, mediaPermissions)
 }
-/* End */

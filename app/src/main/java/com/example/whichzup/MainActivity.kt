@@ -1,19 +1,30 @@
+// com/example/whichzup/MainActivity.kt
 package com.example.whichzup
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navDeepLink
 import androidx.room.Room
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -31,7 +42,6 @@ import com.example.whichzup.chat.ui.groupsettings.GroupSettingsViewModel
 import com.example.whichzup.chat.presentation.profile.ProfileScreen
 import com.example.whichzup.chat.presentation.profile.ProfileViewModel
 import com.example.whichzup.ui.theme.WhichZupTheme
-import androidx.compose.foundation.layout.safeDrawingPadding
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,7 +59,6 @@ class MainActivity : ComponentActivity() {
             .fallbackToDestructiveMigration()
             .build()
 
-        // NEW: Passed applicationContext down to UserRepository
         val userRepository = UserRepository(
             auth = auth,
             firestore = firestore,
@@ -65,6 +74,27 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             WhichZupTheme {
+                val context = LocalContext.current
+
+                // NEW: Handle Android 13+ Notification Permission
+                val permissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    // Handle permission granted/denied if necessary
+                }
+
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        if (ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                     color = MaterialTheme.colorScheme.background
@@ -119,7 +149,13 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        composable("chatRoom/{chatId}/{chatName}") { backStackEntry ->
+                        // UPDATED: Added deepLinks parameter for notification routing
+                        composable(
+                            route = "chatRoom/{chatId}/{chatName}",
+                            deepLinks = listOf(
+                                navDeepLink { uriPattern = "whichzup://chat/{chatId}/{chatName}" }
+                            )
+                        ) { backStackEntry ->
                             val chatId = backStackEntry.arguments?.getString("chatId") ?: ""
                             val chatName = backStackEntry.arguments?.getString("chatName") ?: "Chat"
 
@@ -136,7 +172,16 @@ class MainActivity : ComponentActivity() {
                             ChatRoomScreen(
                                 chatName = chatName,
                                 viewModel = chatRoomViewModel,
-                                onNavigateBack = { navController.popBackStack() },
+                                onNavigateBack = {
+                                    // If opened from a notification, back stack might be empty
+                                    if (navController.previousBackStackEntry == null) {
+                                        navController.navigate("chatList") {
+                                            popUpTo(0) { inclusive = true }
+                                        }
+                                    } else {
+                                        navController.popBackStack()
+                                    }
+                                },
                                 onNavigateToGroupSettings = { targetChatId ->
                                     navController.navigate("groupSettings/$targetChatId")
                                 }
@@ -144,6 +189,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable("groupSettings/{chatId}") { backStackEntry ->
+                            // ... Group Settings implementation ...
                             val chatId = backStackEntry.arguments?.getString("chatId") ?: ""
 
                             val groupSettingsViewModel: GroupSettingsViewModel = viewModel(
@@ -168,6 +214,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable("profile") {
+                            // ... Profile implementation ...
                             val profileViewModel: ProfileViewModel = viewModel(
                                 factory = object : ViewModelProvider.Factory {
                                     @Suppress("UNCHECKED_CAST")
