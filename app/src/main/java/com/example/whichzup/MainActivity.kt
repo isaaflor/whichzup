@@ -183,7 +183,8 @@ class MainActivity : ComponentActivity() {
                                     @Suppress("UNCHECKED_CAST")
                                     override fun <T : ViewModel> create(modelClass: Class<T>): T {
                                         val currentUserId = auth.currentUser?.uid ?: ""
-                                        return ChatRoomViewModel(chatId, currentUserId, chatRepository) as T
+                                        // FIXED: Added userRepository parameter here
+                                        return ChatRoomViewModel(chatId, currentUserId, chatRepository, userRepository) as T
                                     }
                                 }
                             )

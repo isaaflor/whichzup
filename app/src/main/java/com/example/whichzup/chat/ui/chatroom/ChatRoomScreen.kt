@@ -1,5 +1,6 @@
+// File path: app/src/main/java/com/example/whichzup/chat/ui/chatroom/ChatRoomScreen.kt
 package com.example.whichzup.chat.ui.chatroom
-
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.whichzup.chat.domain.model.Message
 import com.example.whichzup.chat.domain.model.MessageStatus
+import com.example.whichzup.chat.domain.model.User
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.delay
@@ -58,7 +60,7 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatRoomScreen(
-    chatName: String,
+    chatName: String, // Keeping this to avoid breaking your current NavHost route, but we will override it visually
     viewModel: ChatRoomViewModel,
     onNavigateBack: () -> Unit,
     onNavigateToGroupSettings: (chatId: String) -> Unit
@@ -67,6 +69,10 @@ fun ChatRoomScreen(
     val currentChat by viewModel.currentChat.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val pendingAttachment by viewModel.pendingAttachment.collectAsStateWithLifecycle()
+
+    // New states for dynamic profiles
+    val dynamicChatName by viewModel.dynamicChatName.collectAsStateWithLifecycle()
+    val participants by viewModel.participants.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
@@ -231,7 +237,7 @@ fun ChatRoomScreen(
                 )
             } else {
                 TopAppBar(
-                    title = { Text(chatName) },
+                    title = { Text(dynamicChatName) }, // Updated to use dynamic name
                     navigationIcon = { IconButton(onClick = onNavigateBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                     actions = {
                         IconButton(onClick = { isSearching = true }) { Icon(Icons.Filled.Search, "Search messages") }
@@ -298,9 +304,13 @@ fun ChatRoomScreen(
                 groupedMessages.entries.toList().reversed().forEach { (date, messages) ->
                     items(messages.reversed(), key = { it.id }) { message ->
                         val isMine = message.senderId == viewModel.currentUserId
+                        val senderUser = participants[message.senderId]
+
                         MessageBubble(
                             message = message,
                             isMine = isMine,
+                            sender = senderUser,
+                            isGroup = currentChat?.isGroup == true,
                             searchQuery = searchQuery,
                             onTogglePin = { isPinned -> viewModel.togglePinMessage(message.id, isPinned) }
                         )
@@ -313,6 +323,7 @@ fun ChatRoomScreen(
     }
 }
 
+// ... PendingAttachmentPreview, getMessageAnnotatedString, PinnedMessageBanner remain exactly the same ...
 @Composable
 fun PendingAttachmentPreview(attachment: PendingAttachment, onRemove: () -> Unit) {
     Surface(
@@ -322,7 +333,6 @@ fun PendingAttachmentPreview(attachment: PendingAttachment, onRemove: () -> Unit
         tonalElevation = 2.dp
     ) {
         if (attachment.type == "image" || attachment.type == "video") {
-            // Visual Preview for Images and Videos
             Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
                 coil.compose.AsyncImage(
                     model = attachment.uri,
@@ -330,7 +340,6 @@ fun PendingAttachmentPreview(attachment: PendingAttachment, onRemove: () -> Unit
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
-
                 if (attachment.type == "video") {
                     Icon(
                         imageVector = Icons.Filled.PlayCircle,
@@ -339,8 +348,6 @@ fun PendingAttachmentPreview(attachment: PendingAttachment, onRemove: () -> Unit
                         tint = Color.White.copy(alpha = 0.8f)
                     )
                 }
-
-                // Remove Button
                 IconButton(
                     onClick = onRemove,
                     modifier = Modifier
@@ -353,12 +360,11 @@ fun PendingAttachmentPreview(attachment: PendingAttachment, onRemove: () -> Unit
                 }
             }
         } else {
-            // Small Banner for Audio and Documents
             Row(
                 modifier = Modifier.padding(16.dp).fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val icon = if (attachment.type == "audio") Icons.Filled.AudioFile else Icons.Filled.InsertDriveFile
+                val icon = if (attachment.type == "audio") Icons.Filled.AudioFile else Icons.AutoMirrored.Filled.InsertDriveFile
                 Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -423,7 +429,14 @@ fun PinnedMessageBanner(message: Message, onUnpin: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", onTogglePin: (Boolean) -> Unit) {
+fun MessageBubble(
+    message: Message,
+    isMine: Boolean,
+    sender: User?, // Added sender User object
+    isGroup: Boolean, // Know if we are in a group to show names
+    searchQuery: String = "",
+    onTogglePin: (Boolean) -> Unit
+) {
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     val timeString = message.timestamp?.let { timeFormat.format(it) } ?: "Sending..."
     var showMenu by remember { mutableStateOf(false) }
@@ -436,8 +449,20 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
         verticalAlignment = Alignment.Bottom
     ) {
         if (!isMine) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(32.dp)) {
-                Box(contentAlignment = Alignment.Center) { Text("U", style = MaterialTheme.typography.labelSmall) }
+            // Profile Picture Logic
+            if (!sender?.profilePictureUrl.isNullOrEmpty()) {
+                coil.compose.AsyncImage(
+                    model = sender?.profilePictureUrl,
+                    contentDescription = "Profile Picture",
+                    modifier = Modifier.size(32.dp).clip(CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(32.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(sender?.name?.take(1)?.uppercase() ?: "U", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
             Spacer(modifier = Modifier.width(8.dp))
         }
@@ -453,6 +478,16 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
 
+                    // Show Sender Name in Group Chats
+                    if (isGroup && !isMine) {
+                        Text(
+                            text = sender?.name ?: "Unknown",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+
                     if (!message.mediaUrl.isNullOrEmpty()) {
                         when (message.mediaType) {
                             "audio" -> AudioPlayer(audioUrl = message.mediaUrl)
@@ -463,7 +498,6 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable {
-                                            // Open the video link in an external player
                                             try {
                                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(message.mediaUrl)).apply {
                                                     setDataAndType(Uri.parse(message.mediaUrl), "video/*")
@@ -513,7 +547,6 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
                                 }
                             }
                             else -> {
-                                // Default to Image
                                 coil.compose.AsyncImage(
                                     model = message.mediaUrl,
                                     contentDescription = "Imagem enviada",
@@ -522,7 +555,6 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
                                         .heightIn(max = 250.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable {
-                                            // Optional: Launch intent to view image full screen
                                             try {
                                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(message.mediaUrl)).apply {
                                                     setDataAndType(Uri.parse(message.mediaUrl), "image/*")
@@ -584,7 +616,6 @@ fun MessageBubble(message: Message, isMine: Boolean, searchQuery: String = "", o
         }
     }
 }
-
 @Composable
 fun DateHeader(date: String) {
     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {

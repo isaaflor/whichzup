@@ -1,4 +1,4 @@
-// com/example/whichzup/chat/ui/chatroom/ChatRoomViewModel.kt
+// File path: app/src/main/java/com/example/whichzup/chat/ui/chatroom/ChatRoomViewModel.kt
 package com.example.whichzup.chat.ui.chatroom
 
 import android.net.Uri
@@ -7,8 +7,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.whichzup.chat.domain.model.Chat
 import com.example.whichzup.chat.domain.model.Message
 import com.example.whichzup.chat.domain.model.MessageStatus
+import com.example.whichzup.chat.domain.model.User
 import com.example.whichzup.chat.data.repository.ChatRepository
+import com.example.whichzup.chat.data.repository.UserRepository
 import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -24,7 +27,8 @@ data class PendingAttachment(
 class ChatRoomViewModel(
     private val chatId: String,
     val currentUserId: String,
-    private val chatRepository: ChatRepository
+    private val chatRepository: ChatRepository,
+    private val userRepository: UserRepository // Injected UserRepository
 ) : ViewModel() {
 
     private val dateFormatter = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
@@ -43,6 +47,45 @@ class ChatRoomViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = null
         )
+
+    // Dynamically fetch user profiles for all participants in the chat
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val participants: StateFlow<Map<String, User>> = currentChat
+        .filterNotNull()
+        .flatMapLatest { chat ->
+            if (chat.participantIds.isEmpty()) {
+                flowOf(emptyMap())
+            } else {
+                val userFlows = chat.participantIds.map { userId ->
+                    userRepository.getUserProfile(userId)
+                }
+                combine(userFlows) { usersArray ->
+                    usersArray.filterNotNull().associateBy { it.id }
+                }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
+    // Compute the chat name based on whether it is a group or 1-on-1
+    val dynamicChatName: StateFlow<String> = combine(
+        currentChat.filterNotNull(),
+        participants
+    ) { chat, users ->
+        if (chat.isGroup) {
+            chat.name ?: "Group Chat"
+        } else {
+            val otherUserId = chat.participantIds.firstOrNull { it != currentUserId }
+            users[otherUserId]?.name ?: "Loading..."
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "Loading..."
+    )
 
     val groupedMessages: StateFlow<Map<String, List<Message>>> = chatRepository
         .getMessages(chatId)
@@ -139,7 +182,6 @@ class ChatRoomViewModel(
             }
     }
 
-    // Kept for direct audio recording where we skip the preview banner
     fun uploadAudioDirectly(localUri: Uri) {
         val attachment = PendingAttachment(localUri, "audio", "voice_message_${System.currentTimeMillis()}.mp3")
         uploadAttachmentAndSendMessage(attachment, null)
