@@ -11,6 +11,7 @@ import com.example.whichzup.chat.data.local.dao.ChatDao
 import com.example.whichzup.chat.data.local.dao.MessageDao
 import com.example.whichzup.chat.data.local.entity.toDomain
 import com.example.whichzup.chat.data.local.entity.toEntity
+import com.example.whichzup.chat.utils.CryptoManager
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -20,7 +21,8 @@ import kotlinx.coroutines.tasks.await
 class ChatRepository(
     private val firestore: FirebaseFirestore,
     private val chatDao: ChatDao,
-    private val messageDao: MessageDao
+    private val messageDao: MessageDao,
+    private val cryptoManager: CryptoManager = CryptoManager() // <-- INJETADO AQUI
 ) {
     private val chatsCollection = firestore.collection("chats")
 
@@ -44,7 +46,11 @@ class ChatRepository(
         // 1. Observe Room (SSOT) and emit to the UI
         launch {
             chatDao.getUserChats(userId).collect { entities ->
-                send(entities.map { it.toDomain() })
+                val decryptedChats = entities.map {
+                    // <-- DESCRIPTOGRAFANDO A LAST MESSAGE
+                    it.toDomain().copy(lastMessageText = cryptoManager.decrypt(it.lastMessageText ?: ""))
+                }
+                send(decryptedChats)
             }
         }
 
@@ -66,15 +72,10 @@ class ChatRepository(
         awaitClose { listenerRegistration.remove() }
     }
 
-    // --- UPDATED: Delete Chat Locally AND on Firestore ---
     suspend fun deleteChat(chatId: String): Result<Unit> {
         return try {
-            // 1. Delete locally so the UI updates instantly
             chatDao.deleteChatLocally(chatId)
-
-            // 2. Delete from network so it doesn't sync back
             chatsCollection.document(chatId).delete().await()
-
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -87,11 +88,18 @@ class ChatRepository(
             val messagesRef = chatRef.collection("messages")
             val newMessageRef = messagesRef.document()
 
-            val localMessage = message.copy(id=newMessageRef.id, status = MessageStatus.SENDING.name)
+            // <-- CRIPTOGRAFANDO O TEXTO AQUI ANTES DE SALVAR
+            val encryptedText = message.text?.let { cryptoManager.encrypt(it) }
+
+            val localMessage = message.copy(
+                id = newMessageRef.id,
+                text = encryptedText, // Usa o texto criptografado
+                status = MessageStatus.SENDING.name
+            )
             messageDao.insertMessage(localMessage.toEntity(chatId))
 
             // 1. Optimistic Local Save (UI updates instantly)
-            val networkMessage = message.copy(id= newMessageRef.id, status = MessageStatus.SENT.name)
+            val networkMessage = localMessage.copy(status = MessageStatus.SENT.name)
 
             // 2. Network Sync
             firestore.runBatch { batch ->
@@ -99,7 +107,7 @@ class ChatRepository(
                 batch.update(
                     chatRef,
                     mapOf(
-                        "lastMessageText" to (message.text ?: "Sent an attachment"),
+                        "lastMessageText" to (encryptedText ?: "Sent an attachment"),
                         "lastMessageSenderId" to message.senderId,
                         "lastMessageTimestamp" to FieldValue.serverTimestamp()
                     )
@@ -118,7 +126,11 @@ class ChatRepository(
         // 1. Observe Room (SSOT)
         launch {
             messageDao.getMessagesForChat(chatId).collect { entities ->
-                send(entities.map { it.toDomain() })
+                val decryptedMessages = entities.map {
+                    // <-- DESCRIPTOGRAFANDO PARA A UI MOSTRAR CORRETAMENTE
+                    it.toDomain().copy(text = it.text?.let { txt -> cryptoManager.decrypt(txt) })
+                }
+                send(decryptedMessages)
             }
         }
 
@@ -142,10 +154,7 @@ class ChatRepository(
 
     suspend fun updateMessageStatus(chatId: String, messageId: String, newStatus: String): Result<Unit> {
         return try {
-            // Update local first
             messageDao.updateMessageStatus(messageId, newStatus)
-
-            // Sync with network
             chatsCollection.document(chatId)
                 .collection("messages")
                 .document(messageId)
@@ -160,10 +169,7 @@ class ChatRepository(
     suspend fun updateGroupDetails(chatId: String, name: String, imageUrl: String?): Result<Unit> {
         return try {
             chatsCollection.document(chatId).update(
-                mapOf(
-                    "name" to name,
-                    "groupImageUrl" to imageUrl
-                )
+                mapOf("name" to name, "groupImageUrl" to imageUrl)
             ).await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -184,22 +190,16 @@ class ChatRepository(
 
     suspend fun markMessagesAsRead(chatId: String, unreadMessageIds: List<String>): Result<Unit> {
         if (unreadMessageIds.isEmpty()) return Result.success(Unit)
-
         return try {
             val messagesRef = chatsCollection.document(chatId).collection("messages")
-
-            // Atualiza todas as mensagens de uma vez no Firebase (Batch)
             firestore.runBatch { batch ->
                 unreadMessageIds.forEach { msgId ->
                     batch.update(messagesRef.document(msgId), "status", MessageStatus.READ.name)
                 }
             }.await()
-
-            // Atualiza todas as mensagens no Room localmente
             unreadMessageIds.forEach { msgId ->
                 messageDao.updateMessageStatus(msgId, MessageStatus.READ.name)
             }
-
             Result.success(Unit)
         } catch(e: Exception) {
             Result.failure(e)
@@ -219,15 +219,12 @@ class ChatRepository(
 
     suspend fun toggleMessagePin(chatId: String, messageId: String, isPinned: Boolean): Result<Unit> {
         return try {
-
             messageDao.updateMessagePinnedStatus(messageId, isPinned)
-
             chatsCollection.document(chatId)
                 .collection("messages")
                 .document(messageId)
                 .update("isPinned", isPinned)
                 .await()
-
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

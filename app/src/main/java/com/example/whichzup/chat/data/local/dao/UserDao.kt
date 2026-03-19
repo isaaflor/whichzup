@@ -1,3 +1,4 @@
+// com/example/whichzup/chat/data/local/dao/UserDao.kt
 package com.example.whichzup.chat.data.local.dao
 
 import androidx.room.Dao
@@ -19,9 +20,13 @@ interface UserDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUsers(users: List<UserEntity>)
 
-    // Offline-first search querying both name and email
-    @Query("SELECT * FROM users WHERE name LIKE '%' || :query || '%' OR email LIKE '%' || :query || '%'")
-    fun searchUsersLocal(query: String): Flow<List<UserEntity>>
+    // Offline-first search: busca apenas no banco local e ignora o usuário atual
+    @Query("SELECT * FROM users WHERE id != :currentUserId AND (name LIKE '%' || :query || '%' OR email LIKE '%' || :query || '%') ORDER BY name ASC")
+    fun searchUsersLocal(query: String, currentUserId: String): Flow<List<UserEntity>>
+
+    // NOVO: Pega todos os contatos salvos localmente (para quando a busca estiver vazia)
+    @Query("SELECT * FROM users WHERE id != :currentUserId ORDER BY name ASC")
+    fun getAllContacts(currentUserId: String): Flow<List<UserEntity>>
 
     @Query("UPDATE users SET name = :name, profilePictureUrl = :profilePictureUrl, bio = :bio WHERE id = :userId")
     suspend fun updateProfileInfo(userId: String, name: String, profilePictureUrl: String, bio: String)

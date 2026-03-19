@@ -42,14 +42,21 @@ class ChatListViewModel(
     private val _showCreateGroupDialog = MutableStateFlow(false)
     val showCreateGroupDialog = _showCreateGroupDialog.asStateFlow()
 
-    // NEW: Sync Status State for UI Feedback
+    // NOVO: Estados do modal de Adicionar Contato Manualmente
+    private val _showAddContactDialog = MutableStateFlow(false)
+    val showAddContactDialog = _showAddContactDialog.asStateFlow()
+
     private val _syncStatus = MutableStateFlow<String?>(null)
     val syncStatus = _syncStatus.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val searchedContacts: StateFlow<List<User>> = _searchQuery
         .flatMapLatest { query ->
-            if (query.isBlank()) flowOf(emptyList()) else userRepository.searchUsers(query)
+            if (query.isBlank()) {
+                userRepository.getAllContacts()
+            } else {
+                userRepository.searchUsers(query)
+            }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -112,7 +119,6 @@ class ChatListViewModel(
         }
     }
 
-    // UPDATED: Now provides feedback to the UI
     fun syncContacts() {
         viewModelScope.launch {
             _syncStatus.value = "Scanning contacts..."
@@ -123,6 +129,27 @@ class ChatListViewModel(
                 .onFailure {
                     Log.e("ChatListViewModel", "Failed to sync contacts", it)
                     _syncStatus.value = "Failed to import contacts."
+                }
+        }
+    }
+
+    // NOVO: Funções para abrir/fechar dialog e chamar o repository
+    fun onAddContactClicked() { _showAddContactDialog.value = true }
+
+    fun onDismissAddContactDialog() { _showAddContactDialog.value = false }
+
+    fun addContactByEmail(email: String) {
+        if (email.isBlank()) return
+
+        viewModelScope.launch {
+            _syncStatus.value = "Searching for user..."
+            userRepository.addContactByEmail(email.trim())
+                .onSuccess {
+                    _syncStatus.value = "Contact added successfully!"
+                    _showAddContactDialog.value = false
+                }
+                .onFailure {
+                    _syncStatus.value = "User not found."
                 }
         }
     }

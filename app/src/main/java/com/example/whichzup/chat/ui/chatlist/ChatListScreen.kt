@@ -50,7 +50,9 @@ fun ChatListScreen(
     val selectedUserIds by viewModel.selectedUserIds.collectAsStateWithLifecycle()
     val showGroupDialog by viewModel.showCreateGroupDialog.collectAsStateWithLifecycle()
 
-    // NEW: Observe sync status for Toast notifications
+    // NOVO: Observe o estado do modal de Adicionar Contato
+    val showAddContactDialog by viewModel.showAddContactDialog.collectAsStateWithLifecycle()
+
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
 
     LaunchedEffect(syncStatus) {
@@ -89,7 +91,10 @@ fun ChatListScreen(
                 },
                 actions = {
                     if (!isGroupMode) {
-                        // UPDATED: Check if already granted before launching
+                        // NOVO: Ícone para adicionar contato manualmente
+                        IconButton(onClick = viewModel::onAddContactClicked) {
+                            Icon(Icons.Filled.PersonAdd, contentDescription = "Add Contact")
+                        }
                         IconButton(onClick = {
                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
                                 viewModel.syncContacts()
@@ -195,6 +200,14 @@ fun ChatListScreen(
             }
         }
 
+        // NOVO: Exibe o modal se o estado for true
+        if (showAddContactDialog) {
+            AddContactDialog(
+                onDismiss = viewModel::onDismissAddContactDialog,
+                onConfirm = viewModel::addContactByEmail
+            )
+        }
+
         if (showGroupDialog) {
             CreateGroupDialog(
                 onDismiss = viewModel::onDismissGroupDialog,
@@ -202,6 +215,40 @@ fun ChatListScreen(
             )
         }
     }
+}
+
+// NOVO: Componente do Modal
+@Composable
+fun AddContactDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (email: String) -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Contact") },
+        text = {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("User Email") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(email) },
+                enabled = email.isNotBlank()
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

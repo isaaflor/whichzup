@@ -16,9 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -203,33 +201,23 @@ class UserRepository(
         }
     }
 
-    fun searchUsers(query: String): Flow<List<User>> = channelFlow {
-        launch {
-            userDao.searchUsersLocal(query).collect { entities ->
-                send(entities.map { it.toDomain() })
-            }
-        }
-        if (query.isNotBlank()) {
-            try {
-                val snapshot = usersCollection
-                    .whereGreaterThanOrEqualTo("name", query)
-                    .whereLessThanOrEqualTo("name", query + "\uf8ff")
-                    .get()
-                    .await()
-
-                val networkUsers = snapshot.documents.mapNotNull { it.toObject(User::class.java) }
-                if (networkUsers.isNotEmpty()) {
-                    userDao.insertUsers(networkUsers.map { it.toEntity() })
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
+    fun getAllContacts(): Flow<List<User>> {
+        val currentUserId = auth.currentUser?.uid ?: ""
+        return userDao.getAllContacts(currentUserId).map { entities ->
+            entities.map { it.toDomain() }
         }
     }
 
-    // --- UPDATED: Moved to Dispatchers.IO & fixed Cancellation handling ---
+    fun searchUsers(query: String): Flow<List<User>> {
+        val currentUserId = auth.currentUser?.uid ?: ""
+        return userDao.searchUsersLocal(query, currentUserId).map { entities ->
+            entities.map { it.toDomain() }
+        }
+    }
+
     suspend fun syncDeviceContacts(): Result<Unit> = withContext(Dispatchers.IO) {
         return@withContext try {
+            val currentUserId = auth.currentUser?.uid ?: return@withContext Result.failure(Exception("Not logged in"))
             val emails = mutableSetOf<String>()
             val projection = arrayOf(ContactsContract.CommonDataKinds.Email.DATA)
             val cursor = context.contentResolver.query(
@@ -252,21 +240,44 @@ class UserRepository(
                 Result.success(Unit)
             } else {
                 val matchedUsers = mutableListOf<User>()
-                val chunks = emails.chunked(10)
+                val chunks = emails.chunked(10) // Firestore aceita no max 10 no whereIn
 
                 for (chunk in chunks) {
                     val snapshot = usersCollection.whereIn("email", chunk).get().await()
                     matchedUsers.addAll(snapshot.documents.mapNotNull { it.toObject(User::class.java) })
                 }
 
-                if (matchedUsers.isNotEmpty()) {
-                    userDao.insertUsers(matchedUsers.map { it.toEntity() })
+                // Filtra para não adicionar você mesmo na lista de contatos do Room
+                val usersToSave = matchedUsers.filter { it.id != currentUserId }
+
+                if (usersToSave.isNotEmpty()) {
+                    userDao.insertUsers(usersToSave.map { it.toEntity() })
                 }
 
                 Result.success(Unit)
             }
         } catch (e: Exception) {
-            // NEVER swallow a CancellationException, it breaks coroutines!
+            if (e is CancellationException) throw e
+            Result.failure(e)
+        }
+    }
+
+    // NOVO: Adiciona um contato pelo e-mail manual
+    suspend fun addContactByEmail(email: String): Result<Unit> = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val currentUserId = auth.currentUser?.uid ?: return@withContext Result.failure(Exception("Not logged in"))
+
+            // Busca o usuário exato pelo email no Firestore
+            val snapshot = usersCollection.whereEqualTo("email", email).get().await()
+            val user = snapshot.documents.firstOrNull()?.toObject(User::class.java)
+
+            if (user != null && user.id != currentUserId) {
+                userDao.insertUser(user.toEntity()) // Salva no Room para aparecer na lista
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("User not found or is current user"))
+            }
+        } catch (e: Exception) {
             if (e is CancellationException) throw e
             Result.failure(e)
         }
