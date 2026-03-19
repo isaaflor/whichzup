@@ -22,7 +22,7 @@ class ChatRepository(
     private val firestore: FirebaseFirestore,
     private val chatDao: ChatDao,
     private val messageDao: MessageDao,
-    private val cryptoManager: CryptoManager = CryptoManager() // <-- INJETADO AQUI
+    private val cryptoManager: CryptoManager = CryptoManager() // Injetado aqui
 ) {
     private val chatsCollection = firestore.collection("chats")
 
@@ -31,10 +31,17 @@ class ChatRepository(
             val docRef = if (chat.id.isEmpty()) chatsCollection.document() else chatsCollection.document(chat.id)
             val chatToSave = chat.copy(id = docRef.id)
 
-            // Optimistic save to Room
-            chatDao.insertChat(chatToSave.toEntity())
+            // Criptografa a lastMessageText se houver antes de salvar localmente
+            val encryptedLastMsg = if (chatToSave.lastMessageText.isNotEmpty()) {
+                cryptoManager.encrypt(chatToSave.lastMessageText)
+            } else {
+                chatToSave.lastMessageText
+            }
 
-            // Network save
+            // Optimistic save to Room (Criptografado)
+            chatDao.insertChat(chatToSave.copy(lastMessageText = encryptedLastMsg).toEntity())
+
+            // Network save (Texto plano)
             docRef.set(chatToSave).await()
             Result.success(docRef.id)
         } catch (e: Exception) {
@@ -47,7 +54,7 @@ class ChatRepository(
         launch {
             chatDao.getUserChats(userId).collect { entities ->
                 val decryptedChats = entities.map {
-                    // <-- DESCRIPTOGRAFANDO A LAST MESSAGE
+                    // Descriptografa a last message para mostrar na tela de chats
                     it.toDomain().copy(lastMessageText = cryptoManager.decrypt(it.lastMessageText ?: ""))
                 }
                 send(decryptedChats)
@@ -64,7 +71,16 @@ class ChatRepository(
                 snapshot?.let {
                     val chats = it.documents.mapNotNull { doc -> doc.toObject(Chat::class.java) }
                     launch {
-                        chatDao.insertChats(chats.map { chat -> chat.toEntity() })
+                        // Criptografa as atualizações da nuvem ANTES de salvar no Room
+                        val chatsToSave = chats.map { chat ->
+                            val encryptedLastMsg = if (chat.lastMessageText.isNotEmpty()) {
+                                cryptoManager.encrypt(chat.lastMessageText)
+                            } else {
+                                chat.lastMessageText
+                            }
+                            chat.copy(lastMessageText = encryptedLastMsg).toEntity()
+                        }
+                        chatDao.insertChats(chatsToSave)
                     }
                 }
             }
@@ -88,26 +104,28 @@ class ChatRepository(
             val messagesRef = chatRef.collection("messages")
             val newMessageRef = messagesRef.document()
 
-            // <-- CRIPTOGRAFANDO O TEXTO AQUI ANTES DE SALVAR
+            // 1. Criptografa APENAS para o Room (Local)
             val encryptedText = message.text?.let { cryptoManager.encrypt(it) }
 
             val localMessage = message.copy(
                 id = newMessageRef.id,
-                text = encryptedText, // Usa o texto criptografado
+                text = encryptedText, // Usa o texto criptografado no Room
                 status = MessageStatus.SENDING.name
             )
             messageDao.insertMessage(localMessage.toEntity(chatId))
 
-            // 1. Optimistic Local Save (UI updates instantly)
-            val networkMessage = localMessage.copy(status = MessageStatus.SENT.name)
+            // 2. Network Sync (Texto Limpo para o Firestore)
+            val networkMessage = message.copy(
+                id = newMessageRef.id,
+                status = MessageStatus.SENT.name // Usa a mensagem original (texto limpo)
+            )
 
-            // 2. Network Sync
             firestore.runBatch { batch ->
-                batch.set(newMessageRef, networkMessage)
+                batch.set(newMessageRef, networkMessage) // Salva limpo na coleção de mensagens
                 batch.update(
                     chatRef,
                     mapOf(
-                        "lastMessageText" to (encryptedText ?: "Sent an attachment"),
+                        "lastMessageText" to (message.text ?: "Sent an attachment"), // Salva limpo no lastMessage
                         "lastMessageSenderId" to message.senderId,
                         "lastMessageTimestamp" to FieldValue.serverTimestamp()
                     )
@@ -127,7 +145,7 @@ class ChatRepository(
         launch {
             messageDao.getMessagesForChat(chatId).collect { entities ->
                 val decryptedMessages = entities.map {
-                    // <-- DESCRIPTOGRAFANDO PARA A UI MOSTRAR CORRETAMENTE
+                    // Descriptografa para a UI mostrar corretamente dentro do chat
                     it.toDomain().copy(text = it.text?.let { txt -> cryptoManager.decrypt(txt) })
                 }
                 send(decryptedMessages)
@@ -144,7 +162,12 @@ class ChatRepository(
                 snapshot?.let {
                     val messages = it.documents.mapNotNull { doc -> doc.toObject(Message::class.java) }
                     launch {
-                        messageDao.insertMessages(messages.map { msg -> msg.toEntity(chatId) })
+                        // Recebe limpo do Firestore, criptografa e salva no Room
+                        val entitiesToSave = messages.map { msg ->
+                            val encryptedTxt = msg.text?.let { cryptoManager.encrypt(it) }
+                            msg.copy(text = encryptedTxt).toEntity(chatId)
+                        }
+                        messageDao.insertMessages(entitiesToSave)
                     }
                 }
             }
