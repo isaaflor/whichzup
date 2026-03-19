@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,6 +29,7 @@ import androidx.navigation.navDeepLink
 import androidx.room.Room
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import com.example.whichzup.chat.data.local.AppDatabase
 import com.example.whichzup.chat.data.repository.UserRepository
 import com.example.whichzup.chat.data.repository.ChatRepository
@@ -76,7 +78,7 @@ class MainActivity : ComponentActivity() {
             WhichZupTheme {
                 val context = LocalContext.current
 
-                // NEW: Handle Android 13+ Notification Permission
+                // Handle Android 13+ Notification Permission
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
                 ) { isGranted ->
@@ -124,6 +126,23 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable("chatList") {
+                            // NOVO: Garante que o token seja salvo no Firestore assim que o usuário entra no app logado
+                            LaunchedEffect(Unit) {
+                                val currentUserId = auth.currentUser?.uid
+                                if (currentUserId != null) {
+                                    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                        if (task.isSuccessful) {
+                                            val token = task.result
+                                            firestore.collection("users").document(currentUserId)
+                                                .update("fcmToken", token)
+                                                .addOnSuccessListener {
+                                                    Log.d("FCM", "Token salvo com sucesso para o usuário $currentUserId")
+                                                }
+                                        }
+                                    }
+                                }
+                            }
+
                             val chatListViewModel: ChatListViewModel = viewModel(
                                 factory = object : ViewModelProvider.Factory {
                                     @Suppress("UNCHECKED_CAST")
@@ -189,7 +208,6 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable("groupSettings/{chatId}") { backStackEntry ->
-                            // ... Group Settings implementation ...
                             val chatId = backStackEntry.arguments?.getString("chatId") ?: ""
 
                             val groupSettingsViewModel: GroupSettingsViewModel = viewModel(
@@ -214,7 +232,6 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable("profile") {
-                            // ... Profile implementation ...
                             val profileViewModel: ProfileViewModel = viewModel(
                                 factory = object : ViewModelProvider.Factory {
                                     @Suppress("UNCHECKED_CAST")

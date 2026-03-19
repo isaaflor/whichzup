@@ -1,6 +1,7 @@
 // com/example/whichzup/chat/service/ChatFirebaseMessagingService.kt
 package com.example.whichzup.chat.service
-
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -17,7 +18,13 @@ class ChatFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // TODO: Sync this new FCM token to Firestore
+        val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
+        if (currentUserId != null) {
+            FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(currentUserId)
+                .update("fcmToken", token)
+        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
