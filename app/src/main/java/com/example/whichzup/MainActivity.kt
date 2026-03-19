@@ -31,6 +31,7 @@ import com.example.whichzup.chat.ui.groupsettings.GroupSettingsViewModel
 import com.example.whichzup.chat.presentation.profile.ProfileScreen
 import com.example.whichzup.chat.presentation.profile.ProfileViewModel
 import com.example.whichzup.ui.theme.WhichZupTheme
+import androidx.compose.foundation.layout.safeDrawingPadding
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,7 +66,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             WhichZupTheme {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()

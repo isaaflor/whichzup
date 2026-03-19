@@ -6,6 +6,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.example.whichzup.chat.domain.model.Chat
 import com.example.whichzup.chat.domain.model.Message
+import com.example.whichzup.chat.domain.model.MessageStatus
 import com.example.whichzup.chat.data.local.dao.ChatDao
 import com.example.whichzup.chat.data.local.dao.MessageDao
 import com.example.whichzup.chat.data.local.entity.toDomain
@@ -86,14 +87,15 @@ class ChatRepository(
             val messagesRef = chatRef.collection("messages")
             val newMessageRef = messagesRef.document()
 
-            val messageToSave = message.copy(id = newMessageRef.id)
+            val localMessage = message.copy(id=newMessageRef.id, status = MessageStatus.SENDING.name)
+            messageDao.insertMessage(localMessage.toEntity(chatId))
 
             // 1. Optimistic Local Save (UI updates instantly)
-            messageDao.insertMessage(messageToSave.toEntity(chatId))
+            val networkMessage = message.copy(id= newMessageRef.id, status = MessageStatus.SENT.name)
 
             // 2. Network Sync
             firestore.runBatch { batch ->
-                batch.set(newMessageRef, messageToSave)
+                batch.set(newMessageRef, networkMessage)
                 batch.update(
                     chatRef,
                     mapOf(
@@ -103,6 +105,8 @@ class ChatRepository(
                     )
                 )
             }.await()
+
+            messageDao.updateMessageStatus(newMessageRef.id, MessageStatus.SENT.name)
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -178,11 +182,52 @@ class ChatRepository(
         }
     }
 
+    suspend fun markMessagesAsRead(chatId: String, unreadMessageIds: List<String>): Result<Unit> {
+        if (unreadMessageIds.isEmpty()) return Result.success(Unit)
+
+        return try {
+            val messagesRef = chatsCollection.document(chatId).collection("messages")
+
+            // Atualiza todas as mensagens de uma vez no Firebase (Batch)
+            firestore.runBatch { batch ->
+                unreadMessageIds.forEach { msgId ->
+                    batch.update(messagesRef.document(msgId), "status", MessageStatus.READ.name)
+                }
+            }.await()
+
+            // Atualiza todas as mensagens no Room localmente
+            unreadMessageIds.forEach { msgId ->
+                messageDao.updateMessageStatus(msgId, MessageStatus.READ.name)
+            }
+
+            Result.success(Unit)
+        } catch(e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun removeParticipant(chatId: String, participantIdToRemove: String): Result<Unit> {
         return try {
             chatsCollection.document(chatId).update(
                 "participantIds", FieldValue.arrayRemove(participantIdToRemove)
             ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun toggleMessagePin(chatId: String, messageId: String, isPinned: Boolean): Result<Unit> {
+        return try {
+
+            messageDao.updateMessagePinnedStatus(messageId, isPinned)
+
+            chatsCollection.document(chatId)
+                .collection("messages")
+                .document(messageId)
+                .update("isPinned", isPinned)
+                .await()
+
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

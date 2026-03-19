@@ -15,7 +15,8 @@ data class MessageEntity(
     val timestamp: Date?,
     val status: String,
     val readBy: List<String>,
-    val deliveredTo: List<String>
+    val deliveredTo: List<String>,
+    val isPinned: Boolean
 )
 
 fun MessageEntity.toDomain(): Message = Message(
@@ -26,7 +27,8 @@ fun MessageEntity.toDomain(): Message = Message(
     timestamp = timestamp,
     status = status,
     readBy = readBy,
-    deliveredTo = deliveredTo
+    deliveredTo = deliveredTo,
+    isPinned = isPinned
 )
 
 fun Message.toEntity(chatId: String): MessageEntity = MessageEntity(
@@ -38,5 +40,6 @@ fun Message.toEntity(chatId: String): MessageEntity = MessageEntity(
     timestamp = timestamp,
     status = status,
     readBy = readBy,
-    deliveredTo = deliveredTo
+    deliveredTo = deliveredTo,
+    isPinned = isPinned
 )
